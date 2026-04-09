@@ -1,0 +1,16 @@
+[package]
+name = "popsam-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "popsam"
+crate-type = ["cdylib"]
+
+[dependencies]
+candle-core.workspace = true
+popsam-core = { path = "../popsam-core" }
+pyo3.workspace = true
+serde_json.workspace = true
