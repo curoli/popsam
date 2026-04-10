@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "CLI for AI-assisted selection of semantically representative texts"
+readme = "../../README.md"
+keywords = ["embeddings", "nlp", "sampling", "cli", "feedback"]
+categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 anyhow.workspace = true
@@ -12,4 +18,4 @@ clap.workspace = true
 csv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-popsam-core = { path = "../popsam-core" }
+popsam-core = { version = "0.1.0", path = "../popsam-core" }

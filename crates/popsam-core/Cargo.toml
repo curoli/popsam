@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core library for AI-assisted selection of semantically representative texts"
+readme = "../../README.md"
+keywords = ["embeddings", "nlp", "sampling", "semantic-search", "feedback"]
+categories = ["text-processing", "algorithms"]
 
 [dependencies]
 anyhow.workspace = true
