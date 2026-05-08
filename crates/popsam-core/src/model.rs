@@ -47,6 +47,25 @@ pub struct CandidateRoundVotes {
     pub third_votes: u32,
 }
 
+/// Best round result reached by a candidate during the full election.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateBestResult {
+    /// Candidate identifier.
+    pub id: String,
+    /// One-based round index within the full election.
+    pub full_round_index: usize,
+    /// Number of candidates still active at the start of that round.
+    pub active_candidates: usize,
+    /// One-based rank among active candidates in that round.
+    pub rank: usize,
+    /// Number of first-preference votes in that round.
+    pub first_votes: u32,
+    /// Number of second-preference votes in that round.
+    pub second_votes: u32,
+    /// Number of third-preference votes in that round.
+    pub third_votes: u32,
+}
+
 /// Summary of a reported round among the final `k` candidates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundSummary {
@@ -71,6 +90,8 @@ pub struct ElectionResult {
     pub all_ranked_ids: Vec<String>,
     /// Reported round summaries for the final `k` rounds.
     pub rounds: Vec<RoundSummary>,
+    /// Best round result reached by each candidate during the full election, ordered like `all_ranked_ids`.
+    pub candidate_best_results: Vec<CandidateBestResult>,
     /// Normalized embeddings associated with the processed records.
     pub embeddings: Vec<EmbeddedText>,
 }

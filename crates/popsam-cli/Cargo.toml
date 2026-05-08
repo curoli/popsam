@@ -18,4 +18,4 @@ clap.workspace = true
 csv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-popsam-core = { version = "0.1.0", path = "../popsam-core" }
+popsam-core = { version = "0.1.1", path = "../popsam-core" }

@@ -17,6 +17,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 candle-core.workspace = true
-popsam-core = { version = "0.1.0", path = "../popsam-core" }
+popsam-core = { version = "0.1.1", path = "../popsam-core" }
 pyo3.workspace = true
 serde_json.workspace = true

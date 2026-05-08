@@ -1,8 +1,9 @@
 use candle_core::Device;
 use popsam_core::{
-    run_election, CandleEmbeddingModelFiles, CandleEmbeddingModelSpec, CandleEmbeddingProvider,
-    CandidateRoundVotes, ElectionConfig, ElectionResult, EmbeddedText, EmbeddedTextInput,
-    EmbeddingProvider, InputRecord, OpenAiCompatibleEmbeddingProvider, RoundSummary,
+    run_election, CandidateBestResult, CandidateRoundVotes, CandleEmbeddingModelFiles,
+    CandleEmbeddingModelSpec, CandleEmbeddingProvider, ElectionConfig, ElectionResult,
+    EmbeddedText, EmbeddedTextInput, EmbeddingProvider, InputRecord,
+    OpenAiCompatibleEmbeddingProvider, RoundSummary,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -95,7 +96,14 @@ fn elect_texts_local(
     }
     .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
 
-    elect_from_provider(py, inputs, &provider, report_last_k, elimination_fraction, seed)
+    elect_from_provider(
+        py,
+        inputs,
+        &provider,
+        report_last_k,
+        elimination_fraction,
+        seed,
+    )
 }
 
 #[pyfunction]
@@ -127,7 +135,14 @@ fn elect_texts_openai(
         .collect::<Vec<_>>();
 
     let provider = OpenAiCompatibleEmbeddingProvider::new(base_url, api_key, model);
-    elect_from_provider(py, inputs, &provider, report_last_k, elimination_fraction, seed)
+    elect_from_provider(
+        py,
+        inputs,
+        &provider,
+        report_last_k,
+        elimination_fraction,
+        seed,
+    )
 }
 
 fn elect_from_provider<P: EmbeddingProvider>(
@@ -174,12 +189,33 @@ fn election_result_to_py(py: Python<'_>, result: ElectionResult) -> PyResult<Py<
     }
     dict.set_item("rounds", rounds)?;
 
+    let best_results = PyList::empty(py);
+    for result in result.candidate_best_results {
+        best_results.append(candidate_best_result_to_py(py, result)?)?;
+    }
+    dict.set_item("candidate_best_results", best_results)?;
+
     let embeddings = PyList::empty(py);
     for embedding in result.embeddings {
         embeddings.append(embedded_text_to_py(py, embedding)?)?;
     }
     dict.set_item("embeddings", embeddings)?;
 
+    Ok(dict.unbind())
+}
+
+fn candidate_best_result_to_py(
+    py: Python<'_>,
+    result: CandidateBestResult,
+) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("id", result.id)?;
+    dict.set_item("full_round_index", result.full_round_index)?;
+    dict.set_item("active_candidates", result.active_candidates)?;
+    dict.set_item("rank", result.rank)?;
+    dict.set_item("first_votes", result.first_votes)?;
+    dict.set_item("second_votes", result.second_votes)?;
+    dict.set_item("third_votes", result.third_votes)?;
     Ok(dict.unbind())
 }
 
@@ -198,10 +234,7 @@ fn round_summary_to_py(py: Python<'_>, round: RoundSummary) -> PyResult<Py<PyDic
     Ok(dict.unbind())
 }
 
-fn candidate_round_votes_to_py(
-    py: Python<'_>,
-    vote: CandidateRoundVotes,
-) -> PyResult<Py<PyDict>> {
+fn candidate_round_votes_to_py(py: Python<'_>, vote: CandidateRoundVotes) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("id", vote.id)?;
     dict.set_item("first_votes", vote.first_votes)?;
@@ -243,7 +276,11 @@ impl PyEmbeddedTextInput {
     #[new]
     #[pyo3(signature = (id, embedding, text=None))]
     fn new(id: String, embedding: Vec<f32>, text: Option<String>) -> Self {
-        Self { id, text, embedding }
+        Self {
+            id,
+            text,
+            embedding,
+        }
     }
 }
 

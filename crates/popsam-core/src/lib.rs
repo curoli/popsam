@@ -7,21 +7,22 @@
 
 #![deny(missing_docs)]
 
-/// Embedding provider traits and implementations.
-pub mod embedding;
 /// Election configuration and execution.
 pub mod election;
+/// Embedding provider traits and implementations.
+pub mod embedding;
 /// Error types returned by the library.
 pub mod error;
 /// Serializable data models used by the public API.
 pub mod model;
 
-pub use embedding::{
-    CandleEmbeddingModelFiles, CandleEmbeddingModelSpec, CandleEmbeddingProvider, EmbeddingProvider,
-    OpenAiCompatibleEmbeddingProvider,
-};
 pub use election::{run_election, ElectionConfig};
+pub use embedding::{
+    CandleEmbeddingModelFiles, CandleEmbeddingModelSpec, CandleEmbeddingProvider,
+    EmbeddingProvider, OpenAiCompatibleEmbeddingProvider,
+};
 pub use error::{PopsamError, PopsamResult};
 pub use model::{
-    CandidateRoundVotes, EmbeddedText, EmbeddedTextInput, ElectionResult, InputRecord, RoundSummary,
+    CandidateBestResult, CandidateRoundVotes, ElectionResult, EmbeddedText, EmbeddedTextInput,
+    InputRecord, RoundSummary,
 };

@@ -23,6 +23,35 @@ Each text is both a voter and a candidate. In each round:
 
 To reduce very large candidate sets faster, `popsam` can eliminate multiple candidates at once in early rounds. Once only `k` candidates remain, the algorithm switches to single-candidate elimination so that the final `k` rounds can be reported in full.
 
+## Result Schema
+
+The core result includes the final winner, the representative candidates, the final ranking, the reported final rounds, and each candidate's best round result.
+
+`rounds[].round_index` is one-based within the reported suffix of the election. For example, with `report_last_k = 10`, round `1` is the first reported round after the algorithm has reached the final ten candidates.
+
+`candidate_best_results[].full_round_index` is one-based within the full election. These entries are ordered like `all_ranked_ids`, from winner to first eliminated candidate. A candidate's best result is the lowest `rank` it reached in any full-election round, with ties broken by more first-preference votes, then more second-preference votes, then more third-preference votes.
+
+Example result fragment:
+
+```json
+{
+  "winner_id": "a",
+  "representative_ids": ["a", "c"],
+  "all_ranked_ids": ["a", "c", "b"],
+  "candidate_best_results": [
+    {
+      "id": "a",
+      "full_round_index": 3,
+      "active_candidates": 1,
+      "rank": 1,
+      "first_votes": 3,
+      "second_votes": 0,
+      "third_votes": 0
+    }
+  ]
+}
+```
+
 ## Status
 
 The first version implements:
@@ -33,6 +62,9 @@ The first version implements:
 - a CLI workflow for raw text using either local or OpenAI-compatible embedding generation
 - an OpenAI-compatible embedding provider for API-based usage
 - Python bindings for the core logic
+- result metadata for each candidate's best full-election round
+
+Schema note: `candidate_best_results` is part of the public JSON/Python/Rust result shape in this version. Strict consumers should tolerate additional result fields in future `0.x` releases.
 
 ## CLI
 

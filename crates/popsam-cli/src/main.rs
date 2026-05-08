@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
 use candle_core::Device;
+use clap::{Parser, Subcommand, ValueEnum};
 use popsam_core::{
     run_election, CandleEmbeddingModelFiles, CandleEmbeddingModelSpec, CandleEmbeddingProvider,
     ElectionConfig, ElectionResult, EmbeddedTextInput, EmbeddingProvider, InputRecord,
@@ -223,7 +223,10 @@ fn print_table(result: &ElectionResult, include_text: bool) {
     let text_by_id = text_lookup(result);
     println!("Winner: {}", result.winner_id);
     if include_text {
-        if let Some(text) = text_by_id.get(&result.winner_id).and_then(|text| text.as_deref()) {
+        if let Some(text) = text_by_id
+            .get(&result.winner_id)
+            .and_then(|text| text.as_deref())
+        {
             println!("Winner Text: {}", text);
         }
     }
@@ -236,7 +239,10 @@ fn print_table(result: &ElectionResult, include_text: bool) {
         println!("Representative Texts");
         for (index, candidate_id) in result.representative_ids.iter().enumerate() {
             println!("{:>3}. {}", index + 1, candidate_id);
-            if let Some(text) = text_by_id.get(candidate_id).and_then(|text| text.as_deref()) {
+            if let Some(text) = text_by_id
+                .get(candidate_id)
+                .and_then(|text| text.as_deref())
+            {
                 println!("     {}", text);
             }
         }
@@ -246,10 +252,31 @@ fn print_table(result: &ElectionResult, include_text: bool) {
     for (index, candidate_id) in result.all_ranked_ids.iter().enumerate() {
         println!("{:>3}. {}", index + 1, candidate_id);
         if include_text {
-            if let Some(text) = text_by_id.get(candidate_id).and_then(|text| text.as_deref()) {
+            if let Some(text) = text_by_id
+                .get(candidate_id)
+                .and_then(|text| text.as_deref())
+            {
                 println!("     {}", text);
             }
         }
+    }
+    println!();
+    println!("Best Candidate Results");
+    println!(
+        "  {:<16} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6}",
+        "candidate", "full", "active", "rank", "1st", "2nd", "3rd"
+    );
+    for best in &result.candidate_best_results {
+        println!(
+            "  {:<16} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6}",
+            truncate_id(&best.id, 16),
+            best.full_round_index,
+            best.active_candidates,
+            best.rank,
+            best.first_votes,
+            best.second_votes,
+            best.third_votes
+        );
     }
     println!();
     println!("Last Rounds");
@@ -264,7 +291,10 @@ fn print_table(result: &ElectionResult, include_text: bool) {
                 round.eliminated_candidate_ids.join(", ")
             }
         );
-        println!("  {:<16} {:>6} {:>6} {:>6}", "candidate", "1st", "2nd", "3rd");
+        println!(
+            "  {:<16} {:>6} {:>6} {:>6}",
+            "candidate", "1st", "2nd", "3rd"
+        );
         for vote in &round.votes {
             println!(
                 "  {:<16} {:>6} {:>6} {:>6}",
@@ -285,33 +315,55 @@ fn print_table(result: &ElectionResult, include_text: bool) {
 
 fn print_csv(result: &ElectionResult, include_text: bool) {
     let text_by_id = text_lookup(result);
-    println!("section,round_index,active_candidates,eliminated_candidate_ids,candidate_id,candidate_text,first_votes,second_votes,third_votes,rank,winner_id,winner_text,representative_ids");
+    println!("section,round_index,full_round_index,active_candidates,eliminated_candidate_ids,candidate_id,candidate_text,first_votes,second_votes,third_votes,rank,winner_id,winner_text,representative_ids");
     println!(
-        "summary,,,,,,,,,,{},{},\"{}\"",
+        "summary,,,,,,,,,,,{},{},\"{}\"",
         escape_csv(&result.winner_id),
-        optional_csv_text(include_text, text_by_id.get(&result.winner_id).cloned().flatten()),
+        optional_csv_text(
+            include_text,
+            text_by_id.get(&result.winner_id).cloned().flatten()
+        ),
         result.representative_ids.join(" ")
     );
     for (index, candidate_id) in result.representative_ids.iter().enumerate() {
         println!(
-            "representative,,,,{},{},,,,{},,,",
+            "representative,,,,,{},{},,,,{},,,",
             escape_csv(candidate_id),
-            optional_csv_text(include_text, text_by_id.get(candidate_id).cloned().flatten()),
+            optional_csv_text(
+                include_text,
+                text_by_id.get(candidate_id).cloned().flatten()
+            ),
             index + 1
         );
     }
     for (index, candidate_id) in result.all_ranked_ids.iter().enumerate() {
         println!(
-            "ranking,,,,{},{},,,,{},,,",
+            "ranking,,,,,{},{},,,,{},,,",
             escape_csv(candidate_id),
-            optional_csv_text(include_text, text_by_id.get(candidate_id).cloned().flatten()),
+            optional_csv_text(
+                include_text,
+                text_by_id.get(candidate_id).cloned().flatten()
+            ),
             index + 1
+        );
+    }
+    for best in &result.candidate_best_results {
+        println!(
+            "best_result,,{},{},,{},{},{},{},{},{},,,",
+            best.full_round_index,
+            best.active_candidates,
+            escape_csv(&best.id),
+            optional_csv_text(include_text, text_by_id.get(&best.id).cloned().flatten()),
+            best.first_votes,
+            best.second_votes,
+            best.third_votes,
+            best.rank
         );
     }
     for round in &result.rounds {
         for vote in &round.votes {
             println!(
-                "round,{},{},\"{}\",{},{},{},{},{},,,",
+                "round,{},,{},\"{}\",{},{},{},{},{},,,,",
                 round.round_index,
                 round.active_candidates,
                 round.eliminated_candidate_ids.join(" "),
@@ -331,7 +383,10 @@ fn print_markdown(result: &ElectionResult, include_text: bool) {
     println!();
     println!("- Winner: `{}`", result.winner_id);
     if include_text {
-        if let Some(text) = text_by_id.get(&result.winner_id).and_then(|text| text.as_deref()) {
+        if let Some(text) = text_by_id
+            .get(&result.winner_id)
+            .and_then(|text| text.as_deref())
+        {
             println!("- Winner Text: {}", text);
         }
     }
@@ -350,7 +405,10 @@ fn print_markdown(result: &ElectionResult, include_text: bool) {
         println!();
         for (index, candidate_id) in result.representative_ids.iter().enumerate() {
             println!("{}. `{}`", index + 1, candidate_id);
-            if let Some(text) = text_by_id.get(candidate_id).and_then(|text| text.as_deref()) {
+            if let Some(text) = text_by_id
+                .get(candidate_id)
+                .and_then(|text| text.as_deref())
+            {
                 println!("{}", text);
             }
             println!();
@@ -371,25 +429,59 @@ fn print_markdown(result: &ElectionResult, include_text: bool) {
                 "| {} | `{}` | {} |",
                 index + 1,
                 candidate_id,
-                markdown_text(text_by_id.get(candidate_id).and_then(|text| text.as_deref()))
+                markdown_text(
+                    text_by_id
+                        .get(candidate_id)
+                        .and_then(|text| text.as_deref())
+                )
             );
         } else {
             println!("| {} | `{}` |", index + 1, candidate_id);
         }
     }
     println!();
+    println!("## Best Candidate Results");
+    println!();
+    if include_text {
+        println!("| Candidate | Text | Full Round | Active | Rank | 1st | 2nd | 3rd |");
+        println!("| :-------- | :--- | ----: | -----: | ---: | --: | --: | --: |");
+    } else {
+        println!("| Candidate | Full Round | Active | Rank | 1st | 2nd | 3rd |");
+        println!("| :-------- | ----: | -----: | ---: | --: | --: | --: |");
+    }
+    for best in &result.candidate_best_results {
+        if include_text {
+            println!(
+                "| `{}` | {} | {} | {} | {} | {} | {} | {} |",
+                best.id,
+                markdown_text(text_by_id.get(&best.id).and_then(|text| text.as_deref())),
+                best.full_round_index,
+                best.active_candidates,
+                best.rank,
+                best.first_votes,
+                best.second_votes,
+                best.third_votes
+            );
+        } else {
+            println!(
+                "| `{}` | {} | {} | {} | {} | {} | {} |",
+                best.id,
+                best.full_round_index,
+                best.active_candidates,
+                best.rank,
+                best.first_votes,
+                best.second_votes,
+                best.third_votes
+            );
+        }
+    }
+    println!();
     println!("## Last Rounds");
     println!();
     for round in &result.rounds {
-        println!(
-            "### Round {}",
-            round.round_index
-        );
+        println!("### Round {}", round.round_index);
         println!();
-        println!(
-            "- Active candidates: {}",
-            round.active_candidates
-        );
+        println!("- Active candidates: {}", round.active_candidates);
         println!(
             "- Eliminated: {}",
             if round.eliminated_candidate_ids.is_empty() {
@@ -595,7 +687,9 @@ fn build_openai_provider(args: &EmbedElectArgs) -> Result<OpenAiCompatibleEmbedd
         .or_else(|| std::env::var("OPENAI_EMBEDDING_MODEL").ok())
         .unwrap_or_else(|| "text-embedding-3-small".to_string());
 
-    Ok(OpenAiCompatibleEmbeddingProvider::new(base_url, api_key, model))
+    Ok(OpenAiCompatibleEmbeddingProvider::new(
+        base_url, api_key, model,
+    ))
 }
 
 fn open_reader(path: Option<&PathBuf>) -> Result<BufReader<Box<dyn Read>>> {
@@ -604,9 +698,11 @@ fn open_reader(path: Option<&PathBuf>) -> Result<BufReader<Box<dyn Read>>> {
 
 fn open_read(path: Option<&PathBuf>) -> Result<Box<dyn Read>> {
     match path {
-        Some(path) => Ok(Box::new(
-            File::open(path).with_context(|| format!("failed to open {}", path.display()))?,
-        )),
+        Some(path) => {
+            Ok(Box::new(File::open(path).with_context(|| {
+                format!("failed to open {}", path.display())
+            })?))
+        }
         None => Ok(Box::new(io::stdin())),
     }
 }

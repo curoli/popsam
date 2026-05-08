@@ -1,8 +1,12 @@
 use crate::error::{PopsamError, PopsamResult};
-use crate::model::{CandidateRoundVotes, EmbeddedText, EmbeddedTextInput, ElectionResult, RoundSummary};
+use crate::model::{
+    CandidateBestResult, CandidateRoundVotes, ElectionResult, EmbeddedText, EmbeddedTextInput,
+    RoundSummary,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 /// Configuration for the representative-text election.
 #[derive(Debug, Clone)]
@@ -35,6 +39,7 @@ impl Default for ElectionConfig {
 /// - the final winner
 /// - the last `k` surviving candidates
 /// - round-by-round vote totals for the reported suffix
+/// - each candidate's best result across the full election
 /// - normalized embeddings for all processed inputs
 pub fn run_election(
     inputs: Vec<EmbeddedTextInput>,
@@ -77,10 +82,20 @@ pub fn run_election(
     let mut eliminated_ranked = Vec::with_capacity(embeddings.len().saturating_sub(1));
     let mut rounds = Vec::new();
     let mut representative_ids = Vec::new();
+    let mut candidate_best_results = vec![None; embeddings.len()];
+    let mut full_round_index = 0;
 
     while active.len() > 1 {
+        full_round_index += 1;
         let vote_rows = tally_votes(&embeddings, &active, &mut rng);
-        let eliminate_count = elimination_count(active.len(), report_k, config.elimination_fraction);
+        update_best_results(
+            &mut candidate_best_results,
+            &active,
+            &vote_rows,
+            full_round_index,
+        );
+        let eliminate_count =
+            elimination_count(active.len(), report_k, config.elimination_fraction);
         let weakest = weakest_candidates(&vote_rows, eliminate_count, &mut rng);
 
         if active.len() <= report_k {
@@ -90,7 +105,13 @@ pub fn run_election(
                     .map(|&idx| embeddings[idx].id.clone())
                     .collect();
             }
-            rounds.push(build_round_summary(&embeddings, &active, &vote_rows, &weakest, rounds.len() + 1));
+            rounds.push(build_round_summary(
+                &embeddings,
+                &active,
+                &vote_rows,
+                &weakest,
+                rounds.len() + 1,
+            ));
         }
 
         let mut removed_flags = vec![false; embeddings.len()];
@@ -107,7 +128,14 @@ pub fn run_election(
         representative_ids.push(winner_id.clone());
     }
     if report_k > 0 {
+        full_round_index += 1;
         let final_votes = tally_votes(&embeddings, &active, &mut rng);
+        update_best_results(
+            &mut candidate_best_results,
+            &active,
+            &final_votes,
+            full_round_index,
+        );
         rounds.push(build_round_summary(
             &embeddings,
             &active,
@@ -119,12 +147,15 @@ pub fn run_election(
     let mut all_ranked_ids = vec![winner_id.clone()];
     eliminated_ranked.reverse();
     all_ranked_ids.extend(eliminated_ranked);
+    let candidate_best_results =
+        order_best_results(candidate_best_results, &embeddings, &all_ranked_ids);
 
     Ok(ElectionResult {
         winner_id,
         representative_ids,
         all_ranked_ids,
         rounds,
+        candidate_best_results,
         embeddings,
     })
 }
@@ -136,9 +167,7 @@ fn normalize(id: &str, embedding: Vec<f32>) -> PopsamResult<Vec<f32>> {
         .sum::<f32>()
         .sqrt();
     if norm == 0.0 {
-        return Err(PopsamError::ZeroNorm {
-            id: id.to_string(),
-        });
+        return Err(PopsamError::ZeroNorm { id: id.to_string() });
     }
     Ok(embedding.into_iter().map(|value| value / norm).collect())
 }
@@ -230,15 +259,7 @@ fn build_round_summary(
     eliminated: &[usize],
     round_index: usize,
 ) -> RoundSummary {
-    let mut votes = vote_rows.iter().map(|(_, votes)| votes.clone()).collect::<Vec<_>>();
-    votes.sort_by(|left, right| {
-        right
-            .first_votes
-            .cmp(&left.first_votes)
-            .then(right.second_votes.cmp(&left.second_votes))
-            .then(right.third_votes.cmp(&left.third_votes))
-            .then(left.id.cmp(&right.id))
-    });
+    let votes = sorted_votes(vote_rows);
 
     RoundSummary {
         round_index,
@@ -251,14 +272,101 @@ fn build_round_summary(
     }
 }
 
+fn update_best_results(
+    candidate_best_results: &mut [Option<CandidateBestResult>],
+    active: &[usize],
+    vote_rows: &[(usize, CandidateRoundVotes)],
+    round_index: usize,
+) {
+    let active_candidates = active.len();
+    for (rank, (candidate_idx, votes)) in sorted_vote_rows(vote_rows).into_iter().enumerate() {
+        let result = CandidateBestResult {
+            id: votes.id.clone(),
+            full_round_index: round_index,
+            active_candidates,
+            rank: rank + 1,
+            first_votes: votes.first_votes,
+            second_votes: votes.second_votes,
+            third_votes: votes.third_votes,
+        };
+
+        let best = &mut candidate_best_results[candidate_idx];
+        if best
+            .as_ref()
+            .is_none_or(|current| is_better_result(&result, current))
+        {
+            *best = Some(result);
+        }
+    }
+}
+
+fn order_best_results(
+    candidate_best_results: Vec<Option<CandidateBestResult>>,
+    embeddings: &[EmbeddedText],
+    all_ranked_ids: &[String],
+) -> Vec<CandidateBestResult> {
+    let mut index_by_id = HashMap::with_capacity(embeddings.len());
+    for (idx, embedding) in embeddings.iter().enumerate() {
+        index_by_id.insert(embedding.id.as_str(), idx);
+    }
+
+    all_ranked_ids
+        .iter()
+        .map(|id| {
+            let idx = index_by_id
+                .get(id.as_str())
+                .expect("ranked candidate must exist in embeddings");
+            candidate_best_results[*idx]
+                .clone()
+                .expect("every candidate is active in at least one round")
+        })
+        .collect()
+}
+
+fn sorted_votes(vote_rows: &[(usize, CandidateRoundVotes)]) -> Vec<CandidateRoundVotes> {
+    sorted_vote_rows(vote_rows)
+        .into_iter()
+        .map(|(_, votes)| votes)
+        .collect()
+}
+
+fn sorted_vote_rows(
+    vote_rows: &[(usize, CandidateRoundVotes)],
+) -> Vec<(usize, CandidateRoundVotes)> {
+    let mut votes = vote_rows
+        .iter()
+        .map(|(idx, votes)| (*idx, votes.clone()))
+        .collect::<Vec<_>>();
+    votes.sort_by(|left, right| compare_round_votes(&left.1, &right.1));
+    votes
+}
+
+fn compare_round_votes(left: &CandidateRoundVotes, right: &CandidateRoundVotes) -> Ordering {
+    right
+        .first_votes
+        .cmp(&left.first_votes)
+        .then(right.second_votes.cmp(&left.second_votes))
+        .then(right.third_votes.cmp(&left.third_votes))
+        .then(left.id.cmp(&right.id))
+}
+
+fn is_better_result(candidate: &CandidateBestResult, current: &CandidateBestResult) -> bool {
+    candidate
+        .rank
+        .cmp(&current.rank)
+        .reverse()
+        .then(candidate.first_votes.cmp(&current.first_votes))
+        .then(candidate.second_votes.cmp(&current.second_votes))
+        .then(candidate.third_votes.cmp(&current.third_votes))
+        .then(candidate.active_candidates.cmp(&current.active_candidates))
+        == Ordering::Greater
+}
+
 fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
     left.iter().zip(right.iter()).map(|(a, b)| a * b).sum()
 }
 
-fn compare_similarity(
-    left: &(usize, f32, u64),
-    right: &(usize, f32, u64),
-) -> Ordering {
+fn compare_similarity(left: &(usize, f32, u64), right: &(usize, f32, u64)) -> Ordering {
     left.1
         .total_cmp(&right.1)
         .then_with(|| left.2.cmp(&right.2))
@@ -271,10 +379,26 @@ mod tests {
     #[test]
     fn keeps_last_k_rounds_and_winner() {
         let inputs = vec![
-            EmbeddedTextInput { id: "a".into(), text: None, embedding: vec![1.0, 0.0] },
-            EmbeddedTextInput { id: "b".into(), text: None, embedding: vec![0.9, 0.1] },
-            EmbeddedTextInput { id: "c".into(), text: None, embedding: vec![0.8, 0.2] },
-            EmbeddedTextInput { id: "d".into(), text: None, embedding: vec![0.0, 1.0] },
+            EmbeddedTextInput {
+                id: "a".into(),
+                text: None,
+                embedding: vec![1.0, 0.0],
+            },
+            EmbeddedTextInput {
+                id: "b".into(),
+                text: None,
+                embedding: vec![0.9, 0.1],
+            },
+            EmbeddedTextInput {
+                id: "c".into(),
+                text: None,
+                embedding: vec![0.8, 0.2],
+            },
+            EmbeddedTextInput {
+                id: "d".into(),
+                text: None,
+                embedding: vec![0.0, 1.0],
+            },
         ];
 
         let result = run_election(
@@ -292,16 +416,99 @@ mod tests {
         assert_eq!(result.rounds[0].active_candidates, 3);
         assert_eq!(result.rounds[2].active_candidates, 1);
         assert_eq!(result.winner_id, result.all_ranked_ids[0]);
+        assert_eq!(result.candidate_best_results.len(), 4);
+        assert!(result
+            .candidate_best_results
+            .iter()
+            .all(|result| result.rank >= 1 && result.rank <= result.active_candidates));
+        assert!(result
+            .candidate_best_results
+            .iter()
+            .any(|best| best.id == result.winner_id && best.rank == 1));
     }
 
     #[test]
     fn rejects_dimension_mismatch() {
         let inputs = vec![
-            EmbeddedTextInput { id: "a".into(), text: None, embedding: vec![1.0, 0.0] },
-            EmbeddedTextInput { id: "b".into(), text: None, embedding: vec![1.0] },
+            EmbeddedTextInput {
+                id: "a".into(),
+                text: None,
+                embedding: vec![1.0, 0.0],
+            },
+            EmbeddedTextInput {
+                id: "b".into(),
+                text: None,
+                embedding: vec![1.0],
+            },
         ];
 
         let error = run_election(inputs, ElectionConfig::default()).expect_err("must fail");
         assert!(matches!(error, PopsamError::DimensionMismatch { .. }));
+    }
+
+    #[test]
+    fn tracks_best_result_for_each_candidate_across_full_election() {
+        let inputs = vec![
+            EmbeddedTextInput {
+                id: "a".into(),
+                text: None,
+                embedding: vec![1.0, 0.0],
+            },
+            EmbeddedTextInput {
+                id: "b".into(),
+                text: None,
+                embedding: vec![0.9, 0.1],
+            },
+            EmbeddedTextInput {
+                id: "c".into(),
+                text: None,
+                embedding: vec![0.0, 1.0],
+            },
+            EmbeddedTextInput {
+                id: "d".into(),
+                text: None,
+                embedding: vec![0.1, 0.9],
+            },
+            EmbeddedTextInput {
+                id: "e".into(),
+                text: None,
+                embedding: vec![0.7, 0.3],
+            },
+        ];
+
+        let result = run_election(
+            inputs,
+            ElectionConfig {
+                report_last_k: 2,
+                elimination_fraction: 0.4,
+                random_seed: 11,
+            },
+        )
+        .expect("election should succeed");
+
+        assert_eq!(result.candidate_best_results.len(), 5);
+        assert_eq!(
+            result
+                .candidate_best_results
+                .iter()
+                .map(|best| best.id.as_str())
+                .collect::<Vec<_>>(),
+            result
+                .all_ranked_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            result.rounds[0].round_index < result.candidate_best_results[0].full_round_index
+                || result
+                    .candidate_best_results
+                    .iter()
+                    .any(|best| best.active_candidates > result.rounds[0].active_candidates)
+        );
+        assert!(result
+            .candidate_best_results
+            .iter()
+            .all(|best| best.full_round_index >= 1 && best.active_candidates >= 1));
     }
 }
